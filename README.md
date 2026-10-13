@@ -235,6 +235,7 @@ The repo deploys as one Docker service plus Postgres.
 ## Known limitations / what I'd do next
 
 - **Evaluate the prompts on real tickets:** build a labelled set from historical tickets, measure category/priority accuracy and draft quality (LLM-as-judge plus agent ratings), then tune. The override rate is the live proxy until then.
+- **Refusal fallback:** a draft the model declines currently drops to the policy template. Anthropic's server-side `fallbacks` (beta) could retry on another model in the same call first.
 - **Scale-out:** move the event bus to Postgres `LISTEN/NOTIFY`/Redis and triage to a durable queue (BullMQ / pg-boss) with retries. The current in-process sweeper is the minimum viable version.
 - **Attachments** go to local disk (ephemeral on most PaaS). Next step is S3/R2 with signed URLs, a virus scan, and passing images to the model for print-quality tickets.
 - **Retrieval** is a category → KB-section map, which suits a 1.5k-token KB. A larger help centre would need hybrid search (BM25 + embeddings) behind the same `renderCategoryKnowledge` seam.

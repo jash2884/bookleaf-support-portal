@@ -102,7 +102,7 @@ async function generateDraft(ticketId: string, agent: { name: string }, publicCo
     ticketId,
     model: env.AI_DRAFT_MODEL,
     effort: env.AI_DRAFT_EFFORT,
-    maxTokens: 4096,
+    maxTokens: 8192, // thinking counts toward this; a reply itself is ~400 tokens
     system,
     user,
     schema: DraftSchema,

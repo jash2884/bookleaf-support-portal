@@ -96,6 +96,8 @@ export function useAddMessage<T extends AuthorTicket | AdminTicket>(ticketId: st
     onSuccess: (ticket) => {
       qc.setQueryData(keys.ticket(ticketId), ticket);
       invalidate(ticketId);
+      // A sent reply makes the cached draft stale (don't rely on the SSE event alone).
+      void qc.invalidateQueries({ queryKey: keys.draft(ticketId) });
     },
   });
 }
