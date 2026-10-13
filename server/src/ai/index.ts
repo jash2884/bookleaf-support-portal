@@ -7,7 +7,8 @@ import { LlmGateway, type AiCallRecord } from "./llmGateway.js";
 
 /** Persist every AI call for the cost/reliability dashboard. */
 async function recordAiCall(entry: AiCallRecord) {
-  if (entry.outcome !== "SUCCESS") logger.warn({ ai: entry }, "AI call did not succeed; fallback used");
+  // "disabled" is a deliberate configuration, not an incident: don't warn on every ticket.
+  if (entry.outcome !== "SUCCESS" && entry.errorType !== "disabled") logger.warn({ ai: entry }, "AI call did not succeed; fallback used");
   await prisma.aiCallLog.create({
     data: {
       task: entry.task,
