@@ -1,0 +1,26 @@
+{
+  "name": "bookleaf-support-portal",
+  "private": true,
+  "version": "1.0.0",
+  "description": "BookLeaf Author Support & Communication Portal — author portal, admin ticket desk and AI-assisted triage/drafting.",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace server & npm run dev --workspace client",
+    "dev:server": "npm run dev --workspace server",
+    "dev:client": "npm run dev --workspace client",
+    "db:up": "docker compose up -d db",
+    "db:migrate": "npm run db:migrate --workspace server",
+    "db:seed": "npm run db:seed --workspace server",
+    "db:reset": "npm run db:reset --workspace server",
+    "build": "npm run build --workspace server && npm run build --workspace client",
+    "start": "npm run start --workspace server",
+    "test": "npm run test --workspace server",
+    "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace client"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}
