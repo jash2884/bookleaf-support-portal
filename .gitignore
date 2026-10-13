@@ -7,3 +7,4 @@ dist/
 coverage/
 server/uploads/*
 !server/uploads/.gitkeep
+server/tmp-test-uploads/
