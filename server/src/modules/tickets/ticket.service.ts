@@ -4,6 +4,7 @@ import { badRequest, conflict, forbidden, notFound } from "../../lib/errors.js";
 import type { AuthUser } from "../../http/auth.js";
 import { ticketEvents } from "../../realtime/eventBus.js";
 import { triageTicket } from "../../ai/triageService.js";
+import { TEMPLATE_MODEL } from "../../ai/draftService.js";
 import {
   TICKET_DETAIL_INCLUDE,
   TICKET_LIST_INCLUDE,
@@ -214,10 +215,13 @@ export async function addMessage(actor: AuthUser, ticketId: string, body: AddMes
     }
   } else {
     if (body.draftId) {
-      const draft = await prisma.aiDraft.findFirst({ where: { id: body.draftId, ticketId }, select: { id: true, body: true } });
+      const draft = await prisma.aiDraft.findFirst({ where: { id: body.draftId, ticketId }, select: { id: true, body: true, model: true } });
       if (!draft) throw badRequest("Draft does not belong to this ticket", [{ path: "body.draftId", message: "Unknown draft" }]);
       draftId = draft.id;
-      origin = normalise(draft.body) === normalise(body.body) ? "AI_DRAFT_UNEDITED" : "AI_DRAFT_EDITED";
+      // Offline template drafts don't count towards AI draft adoption.
+      if (draft.model !== TEMPLATE_MODEL) {
+        origin = normalise(draft.body) === normalise(body.body) ? "AI_DRAFT_UNEDITED" : "AI_DRAFT_EDITED";
+      }
     }
     if (visibility === "PUBLIC" && !ticket.firstResponseAt) data.firstResponseAt = now;
 
