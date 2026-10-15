@@ -10,7 +10,10 @@ export default defineConfig({
       NODE_ENV: "test",
       DATABASE_URL: TEST_DATABASE_URL,
       JWT_SECRET: "test-secret-test-secret-test-secret-123",
-      ANTHROPIC_API_KEY: "", // integration tests exercise the offline fallbacks
+      // Integration tests exercise the offline fallbacks: never call a real LLM.
+      AI_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "",
+      GEMINI_API_KEY: "",
       UPLOAD_DIR: "tmp-test-uploads",
     },
     projects: [

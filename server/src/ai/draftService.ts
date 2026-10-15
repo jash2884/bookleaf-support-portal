@@ -107,6 +107,7 @@ async function generateDraft(ticketId: string, agent: { name: string }, publicCo
     user,
     schema: DraftSchema,
     timeoutMs: env.AI_TIMEOUT_MS,
+    fallbackModels: env.AI_FALLBACK_MODELS,
   });
 
   const output: DraftOutput = ai.ok ? ai.data : templateDraft(ticket, category, agent.name, now);

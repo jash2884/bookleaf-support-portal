@@ -1,4 +1,4 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import type { PromptBlock } from "../providers/types.js";
 import * as z from "zod/v4";
 import { TicketCategory, TicketPriority } from "@prisma/client";
 import { CATEGORY_INFO, CATEGORIES } from "../../domain/taxonomy.js";
@@ -47,7 +47,7 @@ export interface TriagePromptInput {
   accountFacts: string;
 }
 
-export function buildTriageRequest(input: TriagePromptInput): { system: Anthropic.TextBlockParam[]; user: string } {
+export function buildTriageRequest(input: TriagePromptInput): { system: PromptBlock[]; user: string } {
   const user = `<account_facts>
 ${input.accountFacts}
 </account_facts>
@@ -61,7 +61,7 @@ ${input.accountFacts}
 Classify this ticket.`;
 
   return {
-    system: [{ type: "text", text: TRIAGE_SYSTEM, cache_control: { type: "ephemeral" } }],
+    system: [{ text: TRIAGE_SYSTEM, cache: true }],
     user,
   };
 }

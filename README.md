@@ -2,7 +2,7 @@
 
 A web app for BookLeaf Publishing's author support: an **author portal** (books, royalties, support tickets with live replies) and an **admin support desk** (urgency-sorted queue, AI triage, AI-drafted replies grounded in BookLeaf's knowledge base, internal notes, assignment), on a documented REST API.
 
-- **Stack:** TypeScript end to end · Node 22 + Express 5 · PostgreSQL + Prisma · React 19 + Vite + TanStack Query · Anthropic Claude (Haiku 5.5 for triage, Opus 5.5 for drafts) · Server-Sent Events
+- **Stack:** TypeScript end to end · Node 22 + Express 5 · PostgreSQL + Prisma · React 19 + Vite + TanStack Query · provider-agnostic LLM layer: Google Gemini (live demo, free tier) or Anthropic Claude · Server-Sent Events
 - **Live demo:** `<add your deployed URL here>` (see [Deployment](#deployment))
 - **API docs:** `/api/docs` (Swagger UI) · raw spec: [`server/openapi.yaml`](server/openapi.yaml)
 - **Write-up:** [`WRITEUP.md`](WRITEUP.md)
@@ -29,25 +29,25 @@ The database is seeded from `bookleaf_sample_data.json` (10 authors, 18 books) p
 ```bash
 git clone <repo-url> && cd bookleaf-support-portal
 npm install
-cp .env.example server/.env          # then set JWT_SECRET (openssl rand -hex 32) and, optionally, ANTHROPIC_API_KEY
+cp .env.example server/.env          # then set JWT_SECRET (openssl rand -hex 32) and GEMINI_API_KEY (or ANTHROPIC_API_KEY)
 npm run db:up                        # Postgres 16 on localhost:5432 (docker compose)
 npm run db:migrate                   # apply Prisma migrations
 npm run db:seed                      # load the sample dataset + demo tickets
 npm run dev                          # API on :4000, web app on http://localhost:5173
 ```
 
-Without an `ANTHROPIC_API_KEY` the app runs in **AI-offline mode**: tickets are classified by a rule-based classifier and replies start from policy templates. A banner in the admin UI says so. Everything else works the same, which also shows how the app degrades when the AI is unavailable.
+A free Gemini key comes from [aistudio.google.com](https://aistudio.google.com) → *Get API key* (no card needed). Without any key the app runs in **AI-offline mode**: tickets are classified by a rule-based classifier and replies start from policy templates. A banner in the admin UI says so. Everything else works the same, which also shows how the app degrades when the AI is unavailable.
 
 **Everything in Docker (production build):**
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... docker compose --profile full up --build    # http://localhost:4000
+GEMINI_API_KEY=... docker compose --profile full up --build    # http://localhost:4000
 ```
 
 **Tests** (unit tests need nothing; integration tests use a separate `bookleaf_test` database on the same Postgres):
 
 ```bash
-npm run test --workspace server              # all 64 tests
+npm run test --workspace server              # all 71 tests (no real LLM calls — the provider is mocked or disabled)
 npm run test:unit --workspace server         # unit only, no database needed
 ```
 
@@ -88,11 +88,13 @@ flowchart LR
     Bus --> SSE[SSE stream]
     API -- background --> Triage[Triage service]
     API -- on demand --> Draft[Draft service]
-    Triage & Draft --> GW[LLM gateway<br/>timeouts · circuit breaker · usage log]
+    Triage & Draft --> GW[LLM gateway<br/>validation · model fallback · circuit breaker · usage log]
     Triage -. fallback .-> Rules[Rule-based classifier]
     Draft -. fallback .-> Tmpl[Policy templates]
   end
-  GW --> Claude[(Anthropic API)]
+  GW --> P{{Provider adapter}}
+  P --> Gemini[(Google Gemini)]
+  P --> Claude[(Anthropic Claude)]
 ```
 
 ```
@@ -105,7 +107,7 @@ server/
     http/                     auth (JWT cookie/Bearer, requireRole), validation, error handler
     modules/                  auth · books · tickets · admin (routes → service → serializer)
     domain/                   pure business rules: taxonomy, production stages, royalty schedule
-    ai/                       gateway, prompts, knowledge base, account facts, triage, drafts, fallbacks
+    ai/                       gateway, providers/ (gemini, anthropic), prompts, knowledge base, account facts, triage, drafts, fallbacks
     realtime/                 event bus + SSE endpoint
     db/seed.ts                idempotent seed from the provided JSON
   tests/unit, tests/integration
@@ -128,20 +130,26 @@ client/src/
 
 ## AI integration
 
-### Models and why
+### Provider and models
 
-| Task | Model | Settings | Why |
+The AI layer is **provider-agnostic**. `ai/llmGateway.ts` owns everything vendor-neutral (schema validation, circuit breaker, model fallback, usage logging, fallbacks), and a small adapter per vendor in `ai/providers/` translates requests, stop reasons, token usage and errors. `AI_PROVIDER` selects the vendor; the rest of the app doesn't know which one is running.
+
+| Task | Gemini (live demo) | Claude (supported) | Why this split |
 |---|---|---|---|
-| Triage (category, priority, confidence, 1-line summary, rationale) | `claude-haiku-5-5` | structured output (zod schema), effort `low`, 2k max tokens | High-volume classification into a fixed schema. Haiku is fast (keeps the queue fresh) and costs about $0.10 per million input tokens. The brief suggests Haiku for this kind of work. |
-| Reply drafts (email body + internal follow-up actions) | `claude-opus-5-5` | structured output, effort `low` (configurable) | This text goes to authors, so tone, accuracy and following policy matter most. Low effort keeps latency and cost down; drafts are generated at most once per author message. |
+| Triage: category, priority, confidence, 1-line summary, rationale | `gemini-3.5-flash-lite` | `claude-haiku-5-5` | High-volume classification into a fixed schema: the smallest, fastest model keeps the queue fresh and costs least. |
+| Reply drafts: email body + internal follow-up actions | `gemini-3.5-flash` | `claude-opus-5-5` | Text that reaches authors, so tone, accuracy and following policy matter most. |
 
-Both are environment variables (`AI_TRIAGE_MODEL`, `AI_DRAFT_MODEL`, `AI_DRAFT_EFFORT`). Pointing drafts at Haiku makes them about 40× cheaper if quality holds up on real traffic. The Insights page shows override rate and draft adoption to judge that.
+Both use structured JSON output against the same zod schemas and low reasoning effort (thinking level), configurable via `AI_TRIAGE_MODEL`, `AI_DRAFT_MODEL` and `AI_DRAFT_EFFORT`.
+
+**Why Gemini for the demo:** its free tier lets reviewers use the live AI features at zero cost. **Why keep Claude:** it's the stronger choice for author-facing drafts in production. Switching is one environment variable, and the Insights page (override rate, draft adoption) gives the data to decide.
+
+**Model fallback chain:** free-tier models regularly return 503 "high demand". When the main model is overloaded, rate-limited or times out, the gateway retries the same request on the next model in `AI_FALLBACK_MODELS` (Gemini default: `gemini-3.5-flash-lite`, then `gemini-flash-latest`). Only if all of them fail does it drop to the offline fallbacks. A refusal or malformed output is not retried on another model.
 
 ### Triage flow
 
 1. `POST /api/tickets` commits the ticket and returns immediately. Triage runs **in the background** and the result reaches admins over SSE ("Classifying…" → badge).
 2. The prompt has a static system block (role, category definitions, priority rubric, rules), which is prompt-cached. The user turn holds the ticket plus a **brief account snapshot** for the selected book (stage, pending royalty, payout cycles since last payout, threshold status). The facts calibrate priority: "no royalty for 6 months" with three missed payout cycles is Critical, while "₹850 not paid" is Medium because it is below the threshold and rolls over.
-3. Output is a schema-validated object (`messages.parse` + `zodOutputFormat`), so there is no fragile JSON parsing.
+3. The output is constrained to a JSON schema generated from the zod schema (Gemini `responseJsonSchema` / Claude structured outputs), then validated again with zod in the gateway. Anything that doesn't match counts as `invalid_output` and falls back.
 4. If the call fails for any reason, the **rule-based classifier** (`ai/fallback/ruleBasedTriage.ts`) classifies instead. It uses keywords plus the same account facts and errs toward higher priority. The ticket is marked `FALLBACK` with low confidence, and admins can **Re-run AI triage** later.
 5. A **sweeper** re-processes tickets left `PENDING` (e.g. after a server restart mid-triage).
 
@@ -149,9 +157,9 @@ Both are environment variables (`AI_TRIAGE_MODEL`, `AI_DRAFT_MODEL`, `AI_DRAFT_E
 
 1. When an admin opens a ticket, `GET /api/tickets/:id/draft` returns the cached draft, or generates one **only if BookLeaf owes a reply** (the author spoke last). Re-opening a ticket costs nothing; a new author message makes the draft stale. Concurrent opens share one generation.
 2. The prompt has three layers:
-   - **System block 1 (cached, same for every ticket):** persona, the KB's tone guidelines, company overview, and writing rules: ground every number in the facts, only promise timelines the KB defines, own BookLeaf's mistakes, never mention internal notes or AI, sign off as the agent.
+   - **System block 1 (cached, same for every ticket):** persona, the KB's tone guidelines, company overview, and writing rules: ground every number in the facts, only promise timelines the KB defines (as durations, never invented calendar dates), never claim work that hasn't happened, own BookLeaf's mistakes, never mention internal notes or AI, sign off as the agent.
    - **System block 2 (cached per category):** only the KB sections that category needs (royalty policy for royalty tickets, etc.), plus BookLeaf's matching *Sample Query → Response* examples for calibration.
-   - **User turn:** ticket reference, the **full account facts** for the relevant book (figures, last payout, computed next payout date, threshold status, platforms, today's date), and the conversation: the opening message always, then the last 7 messages (each capped at 1,500 characters), with internal notes marked *never quote*.
+   - **User turn:** ticket reference, the **full account facts** for the relevant book (figures, last payout, computed next payout date, threshold status, platforms, today's date), and the conversation: the opening message always, then the last 7 messages (each capped at 1,500 characters), with internal notes marked *never quote*. It ends with a short grounding check ("you don't know the outcome of any escalation unless a note says so"). Testing showed the smaller models otherwise tended to invent follow-up results such as "finance has verified your account".
 3. The output is `{ reply, internal_actions }`. The admin sees the draft in an editor with a checklist of what it commits the team to (e.g. "Trigger Amazon re-sync for Howrah Nights"), so promises in the email don't get forgotten.
 4. If the call fails, a **policy-correct template** for the category is filled with the same computed facts, so the offline draft still cites real amounts and dates. The admin sees why the template was used ("AI rate limit reached", …).
 
@@ -166,22 +174,22 @@ All model calls go through `ai/llmGateway.ts`, which never throws. It returns `{
 | Situation | What happens |
 |---|---|
 | No API key | Gateway is `disabled` and skips the call immediately: rules triage + template drafts. Admin banner: "AI assistance is off". |
-| Timeout (30s) / 5xx / overloaded / rate limit (429) | SDK retries once, then the call fails over to the fallback. 3 consecutive failures **open a circuit breaker** for 60s, so calls are skipped instead of each ticket waiting on a timeout. One trial call is let through after the cooldown. Admin banner: "temporarily unavailable". |
+| Timeout (30s) / 5xx / overloaded / rate limit (429) | SDK retries once, then the gateway tries the next fallback model. If every model fails, the offline fallback is used. 3 consecutive failures **open a circuit breaker** for 60s, so calls are skipped instead of each ticket waiting on a timeout. One trial call is let through after the cooldown. Admin banner: "temporarily unavailable". |
 | Auth error | Same, logged as `auth_error`. |
 | Refusal / truncated / invalid output | Fallback, without counting against provider health. |
 | Any AI failure | **Ticket creation never depends on the AI.** Admins can always write and send replies manually. |
 
-Every call (including skipped ones) is logged in `AiCallLog` with task, model, outcome, tokens, cache reads/writes, latency and estimated cost. `/admin/insights` summarizes spend, fallback counts, latency, prompt-cache reads, **override rate** (how often admins correct the AI) and **draft adoption** (replies sent as-is vs edited vs written manually).
+Every call (including skipped ones) is logged in `AiCallLog` with task, model, outcome, tokens, cache reads/writes, latency and estimated cost. Each model attempt in a fallback chain gets its own row, and failures log the provider's error message. `/admin/insights` summarizes spend, fallback counts, latency, prompt-cache reads, **override rate** (how often admins correct the AI) and **draft adoption** (replies sent as-is vs edited vs written manually).
 
 ### Cost management
 
 - **Model per task:** a small model for classification, a stronger one only for author-facing text.
 - **Lazy, cached drafts:** at most one draft per author message, none when BookLeaf spoke last, none for tickets nobody opens.
 - **Scoped context:** only the KB sections for the ticket's category, only the relevant book's facts (not the author's whole catalogue), a capped conversation window, and a brief fact set for triage.
-- **Prompt caching:** static instructions come first with `cache_control` breakpoints (system core, then per-category KB). Cache reads bill at 10% of input. The Insights page shows cache-read tokens so caching is verifiable. Nothing volatile (dates, IDs) goes in the cached prefix.
+- **Prompt caching:** static instructions come first: system core, then per-category KB, then the per-ticket user turn. Claude gets explicit `cache_control` breakpoints; Gemini caches repeated prefixes implicitly. Either way, cached tokens bill at a fraction of normal input and show up as cache reads on the Insights page. Nothing volatile (dates, IDs) goes in the cached prefix.
 - **Low effort + structured output:** fewer thinking tokens and no retry-to-parse loops.
 - **Circuit breaker:** no paying for doomed calls during an outage.
-- **Rough estimate** at list prices (verify against the Insights page): triage ≈ 1k input / ~300 output tokens on Haiku ≈ **$0.0003 per ticket**. A draft ≈ 2–2.5k input (mostly cached) / ~500 output on Opus at low effort ≈ **$0.01–0.02 per draft**. 3,000 tickets/month comes to roughly $40–60/month, or a few dollars with Haiku drafts.
+- **Rough estimate:** the demo on Gemini's free tier costs $0, so the Insights page shows $0.00 spend. Token counts are still logged. With Claude at list prices, triage ≈ 1k input / ~300 output tokens on Haiku ≈ **$0.0003 per ticket**, and a draft ≈ 2–2.5k input (mostly cached) / ~500 output on Opus at low effort ≈ **$0.01–0.02 per draft**. 3,000 tickets/month comes to roughly $40–60/month, or a few dollars with Haiku drafts.
 
 ---
 
@@ -218,8 +226,8 @@ Full reference: **Swagger UI at `/api/docs`** (try requests after **Authorize** 
 
 The repo deploys as one Docker service plus Postgres.
 
-- **Render (blueprint included):** New → Blueprint → pick the repo. `render.yaml` provisions the web service and a Postgres database, and generates `JWT_SECRET`. Set `ANTHROPIC_API_KEY` in the dashboard. On start, the container runs migrations, seeds the dataset (idempotent) and serves the app.
-- **Railway / Fly / any VPS:** build the `Dockerfile`; set `DATABASE_URL`, `JWT_SECRET` (≥ 32 chars) and `ANTHROPIC_API_KEY`.
+- **Render (blueprint included):** New → Blueprint → pick the repo. `render.yaml` provisions the web service and a Postgres database, and generates `JWT_SECRET`. Set `GEMINI_API_KEY` in the dashboard (or `ANTHROPIC_API_KEY` with `AI_PROVIDER=anthropic`). On start, the container runs migrations, seeds the dataset (idempotent) and serves the app.
+- **Railway / Fly / any VPS:** build the `Dockerfile`; set `DATABASE_URL`, `JWT_SECRET` (≥ 32 chars), `AI_PROVIDER` and the matching API key.
 
 ---
 
@@ -235,10 +243,12 @@ The repo deploys as one Docker service plus Postgres.
 ## Known limitations / what I'd do next
 
 - **Evaluate the prompts on real tickets:** build a labelled set from historical tickets, measure category/priority accuracy and draft quality (LLM-as-judge plus agent ratings), then tune. The override rate is the live proxy until then.
-- **Refusal fallback:** a draft the model declines currently drops to the policy template. Anthropic's server-side `fallbacks` (beta) could retry on another model in the same call first.
+- **Free-tier limits:** Gemini's free tier has low per-minute and per-day quotas and occasional overload. The fallback chain and offline fallbacks absorb this, but production should use a paid tier (or Claude) with quotas sized to ticket volume.
+- **Data use on the free tier:** Google may use free-tier requests to improve its models. That's fine for the sample data, but real author data would need a paid tier with no-training terms.
 - **Scale-out:** move the event bus to Postgres `LISTEN/NOTIFY`/Redis and triage to a durable queue (BullMQ / pg-boss) with retries. The current in-process sweeper is the minimum viable version.
 - **Attachments** go to local disk (ephemeral on most PaaS). Next step is S3/R2 with signed URLs, a virus scan, and passing images to the model for print-quality tickets.
 - **Retrieval** is a category → KB-section map, which suits a 1.5k-token KB. A larger help centre would need hybrid search (BM25 + embeddings) behind the same `renderCategoryKnowledge` seam.
 - **Notifications:** email the author when BookLeaf replies, and nudge them when a ticket waits on them.
 - **Auth hardening:** password reset, account lockout, refresh-token rotation, audit of admin actions beyond the ticket activity log.
+- **Gemini pricing isn't tabulated** in `ai/pricing.ts`, so spend reads $0 on Gemini. Add the paid rates if moving to a paid tier.
 - **Dependency advisory:** `npm audit` reports a `deepmerge-ts` advisory inside the Prisma CLI's config loader. It only processes our own config, never user input; I'd revisit it when moving to Prisma 7.

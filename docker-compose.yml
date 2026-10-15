@@ -25,6 +25,8 @@ services:
     environment:
       DATABASE_URL: postgresql://bookleaf:bookleaf@db:5432/bookleaf?schema=public
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-please-32chars}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NODE_ENV: production
       PORT: 4000

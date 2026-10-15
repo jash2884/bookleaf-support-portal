@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import * as z from "zod/v4";
 import { CircuitBreaker } from "../../src/ai/circuitBreaker.js";
 import { LlmGateway, type AiCallRecord } from "../../src/ai/llmGateway.js";
+import { AnthropicProvider } from "../../src/ai/providers/anthropicProvider.js";
 
 const Schema = z.object({ answer: z.string() });
 
@@ -13,7 +14,7 @@ function request() {
     model: "claude-haiku-5-5",
     effort: "low" as const,
     maxTokens: 512,
-    system: [{ type: "text" as const, text: "system" }],
+    system: [{ text: "system", cache: true }],
     user: "hello",
     schema: Schema,
     timeoutMs: 1000,
@@ -34,11 +35,11 @@ function setup(parse: (...args: unknown[]) => Promise<unknown>) {
   const records: AiCallRecord[] = [];
   const client = { messages: { parse: vi.fn(parse) } } as unknown as Pick<Anthropic, "messages">;
   const breaker = new CircuitBreaker(2, 60_000);
-  const gateway = new LlmGateway(client, breaker, async (r) => void records.push(r));
+  const gateway = new LlmGateway(new AnthropicProvider(client), breaker, async (r) => void records.push(r));
   return { gateway, breaker, records, parse: (client.messages.parse as unknown as ReturnType<typeof vi.fn>) };
 }
 
-describe("LlmGateway", () => {
+describe("LlmGateway (Anthropic provider)", () => {
   it("returns parsed output and records tokens and cost", async () => {
     const { gateway, records } = setup(async () => response());
     const result = await gateway.structured(request());
@@ -51,9 +52,10 @@ describe("LlmGateway", () => {
   it("sends the structured output format and effort to the SDK", async () => {
     const { gateway, parse } = setup(async () => response());
     await gateway.structured(request());
-    const params = parse.mock.calls[0]![0] as { output_config: { effort: string; format: unknown } };
+    const params = parse.mock.calls[0]![0] as { output_config: { effort: string; format: unknown }; system: unknown[] };
     expect(params.output_config.effort).toBe("low");
     expect(params.output_config.format).toBeDefined();
+    expect(params.system).toEqual([{ type: "text", text: "system", cache_control: { type: "ephemeral" } }]);
   });
 
   it("degrades without calling the API when no key is configured", async () => {
@@ -97,9 +99,14 @@ describe("LlmGateway", () => {
     expect(await cut.gateway.structured(request())).toEqual({ ok: false, reason: "truncated" });
   });
 
+  it("rejects output that doesn't match the schema", async () => {
+    const { gateway } = setup(async () => response({ parsed_output: { wrong: 1 } }));
+    expect(await gateway.structured(request())).toEqual({ ok: false, reason: "invalid_output" });
+  });
+
   it("never throws if usage logging fails", async () => {
     const client = { messages: { parse: async () => response() } } as unknown as Pick<Anthropic, "messages">;
-    const gateway = new LlmGateway(client, new CircuitBreaker(), async () => {
+    const gateway = new LlmGateway(new AnthropicProvider(client), new CircuitBreaker(), async () => {
       throw new Error("db down");
     });
     await expect(gateway.structured(request())).resolves.toMatchObject({ ok: true });

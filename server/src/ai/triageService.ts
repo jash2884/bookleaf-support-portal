@@ -50,6 +50,7 @@ async function runTriage(ticketId: string, { force = false }: { force?: boolean 
     user,
     schema: TriageSchema,
     timeoutMs: env.AI_TIMEOUT_MS,
+    fallbackModels: env.AI_FALLBACK_MODELS,
   });
 
   const result: TriageOutput = ai.ok ? ai.data : ruleBasedTriage(ruleInput(ticket, now));

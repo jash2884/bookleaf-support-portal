@@ -1,9 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 import { env } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { CircuitBreaker } from "./circuitBreaker.js";
 import { LlmGateway, type AiCallRecord } from "./llmGateway.js";
+import { AnthropicProvider } from "./providers/anthropicProvider.js";
+import { GeminiProvider } from "./providers/geminiProvider.js";
+import type { LlmProvider } from "./providers/types.js";
 
 /** Persist every AI call for the cost/reliability dashboard. */
 async function recordAiCall(entry: AiCallRecord) {
@@ -26,16 +30,20 @@ async function recordAiCall(entry: AiCallRecord) {
   });
 }
 
-// The API key is read from the environment on the server only. No key → the
-// gateway runs in "disabled" mode and every caller uses its fallback path.
-const client = env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : null;
+// API keys are read from the environment on the server only. No key for the
+// selected provider → the gateway runs "disabled" and every caller uses its fallback.
+function createProvider(): LlmProvider | null {
+  if (env.AI_PROVIDER === "gemini") return env.GEMINI_API_KEY ? new GeminiProvider(new GoogleGenAI({ apiKey: env.GEMINI_API_KEY })) : null;
+  return env.ANTHROPIC_API_KEY ? new AnthropicProvider(new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })) : null;
+}
 
-export const aiGateway = new LlmGateway(client, new CircuitBreaker(3, 60_000), recordAiCall);
+export const aiGateway = new LlmGateway(createProvider(), new CircuitBreaker(3, 60_000), recordAiCall);
 
 export function aiStatus() {
   const mode = !aiGateway.enabled ? "offline" : aiGateway.circuitState === "closed" ? "online" : "degraded";
   return {
     mode,
+    provider: env.AI_PROVIDER,
     triageModel: env.AI_TRIAGE_MODEL,
     draftModel: env.AI_DRAFT_MODEL,
     circuit: aiGateway.circuitState,

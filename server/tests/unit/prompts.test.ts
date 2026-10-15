@@ -77,7 +77,7 @@ describe("triage prompt", () => {
     const req = buildTriageRequest({ subject: "Help", description: "Royalty missing", bookTitle: null, accountFacts: "- facts" });
     expect(req.system).toHaveLength(1);
     expect(req.system[0]!.text).toBe(TRIAGE_SYSTEM);
-    expect(req.system[0]!.cache_control).toEqual({ type: "ephemeral" });
+    expect(req.system[0]!.cache).toBe(true);
     expect(req.user).toContain("Royalty missing");
   });
 
@@ -120,7 +120,7 @@ describe("draft prompt", () => {
       accountFacts: "- f",
       conversation: [entry("author", "hi", 0)],
     });
-    expect(req.system.map((b) => b.cache_control)).toEqual([{ type: "ephemeral" }, { type: "ephemeral" }]);
+    expect(req.system.map((b) => b.cache)).toEqual([true, true]);
     expect(req.system[0]!.text).toBe(DRAFT_SYSTEM_CORE);
     expect(req.user).toContain('sign off as "Neha"');
   });

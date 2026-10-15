@@ -1,5 +1,5 @@
 # Render Blueprint: one Docker web service + managed Postgres.
-# Deploy: Render dashboard → New → Blueprint → select this repo, then set ANTHROPIC_API_KEY.
+# Deploy: Render dashboard → New → Blueprint → select this repo, then set GEMINI_API_KEY (or ANTHROPIC_API_KEY).
 services:
   - type: web
     name: bookleaf-support-portal
@@ -15,12 +15,12 @@ services:
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
-      - key: ANTHROPIC_API_KEY
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
         sync: false # entered in the dashboard; never committed
-      - key: AI_TRIAGE_MODEL
-        value: claude-haiku-5-5
-      - key: AI_DRAFT_MODEL
-        value: claude-opus-5-5
+      - key: ANTHROPIC_API_KEY
+        sync: false # optional: set AI_PROVIDER=anthropic to use Claude instead
 
 databases:
   - name: bookleaf-db

@@ -557,7 +557,7 @@ components:
             id: { type: string }
             body: { type: string }
             internalActions: { type: array, items: { type: string }, description: Follow-ups the reply commits BookLeaf to }
-            model: { type: string, example: claude-opus-5-5 }
+            model: { type: string, example: gemini-3.5-flash }
             isFallback: { type: boolean }
             fallbackReason: { type: [string, "null"], example: rate_limited }
             createdAt: { type: string, format: date-time }
