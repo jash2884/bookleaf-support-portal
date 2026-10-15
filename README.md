@@ -3,7 +3,7 @@
 A web app for BookLeaf Publishing's author support: an **author portal** (books, royalties, support tickets with live replies) and an **admin support desk** (urgency-sorted queue, AI triage, AI-drafted replies grounded in BookLeaf's knowledge base, internal notes, assignment), on a documented REST API.
 
 - **Stack:** TypeScript end to end · Node 22 + Express 5 · PostgreSQL + Prisma · React 19 + Vite + TanStack Query · provider-agnostic LLM layer: Google Gemini (live demo, free tier) or Anthropic Claude · Server-Sent Events
-- **Live demo:** `<add your deployed URL here>` (see [Deployment](#deployment))
+- **Live demo:** https://bookleaf-support-portal-scjv.onrender.com (free tier: the first load after idle takes ~30–60 s to wake up) · API docs: https://bookleaf-support-portal-scjv.onrender.com/api/docs
 - **API docs:** `/api/docs` (Swagger UI) · raw spec: [`server/openapi.yaml`](server/openapi.yaml)
 - **Write-up:** [`WRITEUP.md`](WRITEUP.md)
 
